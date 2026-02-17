@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  detector:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models/weights:/app/models/weights
+      - ./uploads:/app/uploads
+    environment:
+      - MAX_IMAGE_SIZE_MB=10
+      - API_KEY=changeme-in-production
+      - LOG_LEVEL=INFO
+      - MODEL_NAME=efficientnet_b4
+      - CONFIDENCE_THRESHOLD=0.5
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    restart: unless-stopped

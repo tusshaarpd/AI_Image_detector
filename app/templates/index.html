@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Image Detector</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem 1rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            color: #f8fafc;
+            margin-bottom: 0.5rem;
+        }
+
+        header p {
+            color: #94a3b8;
+            font-size: 1rem;
+        }
+
+        .upload-area {
+            background: #1e293b;
+            border: 2px dashed #334155;
+            border-radius: 12px;
+            padding: 3rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s;
+        }
+
+        .upload-area:hover {
+            border-color: #3b82f6;
+            background: #1e293b;
+        }
+
+        .upload-area.drag-over {
+            border-color: #3b82f6;
+            background: #172554;
+        }
+
+        .upload-icon { font-size: 3rem; margin-bottom: 1rem; }
+        .upload-text { font-size: 1.1rem; color: #cbd5e1; }
+        .upload-hint { color: #64748b; font-size: 0.85rem; margin-top: 0.5rem; }
+
+        .file-input { display: none; }
+
+        .btn {
+            display: inline-block;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 0.75rem 2rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            margin-top: 1.5rem;
+            transition: background 0.2s;
+        }
+
+        .btn:hover { background: #2563eb; }
+        .btn:disabled { background: #475569; cursor: not-allowed; }
+
+        .result-card {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-top: 2rem;
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .result-badge {
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .badge-high { background: #991b1b; color: #fca5a5; }
+        .badge-medium { background: #92400e; color: #fcd34d; }
+        .badge-low { background: #166534; color: #86efac; }
+
+        .score-bar {
+            height: 8px;
+            background: #334155;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 1rem 0;
+        }
+
+        .score-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+
+        .score-fill.high { background: #ef4444; }
+        .score-fill.medium { background: #f59e0b; }
+        .score-fill.low { background: #22c55e; }
+
+        .signals-list {
+            list-style: none;
+            margin-top: 1rem;
+        }
+
+        .signals-list li {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #334155;
+            font-size: 0.9rem;
+            color: #cbd5e1;
+        }
+
+        .signals-list li:last-child { border-bottom: none; }
+        .signals-list li::before { content: "- "; color: #64748b; }
+
+        .meta-row {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 1rem;
+            font-size: 0.85rem;
+            color: #64748b;
+        }
+
+        .error-message {
+            background: #7f1d1d;
+            color: #fca5a5;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1rem;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #334155;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .file-name {
+            color: #94a3b8;
+            font-size: 0.9rem;
+            margin-top: 0.75rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AI Image Detector</h1>
+            <p>Detect whether an image is AI-generated or a real photograph</p>
+        </header>
+
+        <form id="uploadForm" action="/analyze" method="post" enctype="multipart/form-data">
+            <div class="upload-area" id="dropZone">
+                <div class="upload-icon">&#128247;</div>
+                <div class="upload-text">Drop an image here or click to upload</div>
+                <div class="upload-hint">Supports JPG, PNG, WEBP (max 10 MB)</div>
+                <input type="file" name="file" id="fileInput" class="file-input"
+                       accept="image/jpeg,image/png,image/webp">
+                <div class="file-name" id="fileName"></div>
+            </div>
+            <div style="text-align: center;">
+                <button type="submit" class="btn" id="analyzeBtn" disabled>Analyze Image</button>
+            </div>
+        </form>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Analyzing image...</p>
+        </div>
+
+        {% if error %}
+        <div class="error-message">{{ error }}</div>
+        {% endif %}
+
+        {% if result %}
+        <div class="result-card">
+            <div class="result-header">
+                <h2>Detection Result</h2>
+                {% if result.risk_level == "High" %}
+                <span class="result-badge badge-high">AI Generated - High Risk</span>
+                {% elif result.risk_level == "Medium" %}
+                <span class="result-badge badge-medium">Uncertain - Medium Risk</span>
+                {% else %}
+                <span class="result-badge badge-low">Likely Real - Low Risk</span>
+                {% endif %}
+            </div>
+
+            <div>
+                <strong>Confidence Score: {{ "%.1f"|format(result.confidence_score * 100) }}%</strong>
+                <div class="score-bar">
+                    {% if result.risk_level == "High" %}
+                    <div class="score-fill high" style="width: {{ result.confidence_score * 100 }}%"></div>
+                    {% elif result.risk_level == "Medium" %}
+                    <div class="score-fill medium" style="width: {{ result.confidence_score * 100 }}%"></div>
+                    {% else %}
+                    <div class="score-fill low" style="width: {{ result.confidence_score * 100 }}%"></div>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if result.signals_detected %}
+            <h3 style="margin-top: 1.5rem; font-size: 1rem;">Signals Detected</h3>
+            <ul class="signals-list">
+                {% for signal in result.signals_detected %}
+                <li>{{ signal }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
+            <div class="meta-row">
+                <span>File: {{ filename }}</span>
+                <span>Model: v{{ result.model_version }}</span>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileName = document.getElementById('fileName');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const form = document.getElementById('uploadForm');
+        const loading = document.getElementById('loading');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('drag-over');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('drag-over');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                updateFileName();
+            }
+        });
+
+        fileInput.addEventListener('change', updateFileName);
+
+        function updateFileName() {
+            if (fileInput.files.length) {
+                fileName.textContent = fileInput.files[0].name;
+                analyzeBtn.disabled = false;
+            }
+        }
+
+        form.addEventListener('submit', () => {
+            loading.style.display = 'block';
+            analyzeBtn.disabled = true;
+        });
+    </script>
+</body>
+</html>
