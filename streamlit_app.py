@@ -1,0 +1,273 @@
+"""Streamlit application for AI Image Detection."""
+
+import io
+import time
+
+import streamlit as st
+from PIL import Image
+
+from app.core.config import get_settings
+from app.core.logging import setup_logging
+from app.core.preprocessing import ImagePreprocessor
+from app.detectors.ensemble import EnsembleEngine
+from app.detectors.frequency import FrequencyDetector
+from app.detectors.metadata import MetadataDetector
+from app.detectors.texture import TextureDetector
+from app.models.cnn_classifier import CNNClassifier
+
+# ---------------------------------------------------------------------------
+# Page config
+# ---------------------------------------------------------------------------
+st.set_page_config(
+    page_title="AI Image Detector",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ---------------------------------------------------------------------------
+# Logging (once per session)
+# ---------------------------------------------------------------------------
+if "logging_initialized" not in st.session_state:
+    setup_logging("INFO")
+    st.session_state.logging_initialized = True
+
+# ---------------------------------------------------------------------------
+# Cached singleton helpers — heavy objects loaded once
+# ---------------------------------------------------------------------------
+settings = get_settings()
+
+
+@st.cache_resource(show_spinner="Loading CNN model…")
+def load_cnn_classifier() -> CNNClassifier:
+    return CNNClassifier()
+
+
+@st.cache_resource
+def load_preprocessor() -> ImagePreprocessor:
+    return ImagePreprocessor()
+
+
+@st.cache_resource
+def load_metadata_detector() -> MetadataDetector:
+    return MetadataDetector()
+
+
+@st.cache_resource
+def load_frequency_detector() -> FrequencyDetector:
+    return FrequencyDetector()
+
+
+@st.cache_resource
+def load_texture_detector() -> TextureDetector:
+    return TextureDetector()
+
+
+@st.cache_resource
+def load_ensemble() -> EnsembleEngine:
+    return EnsembleEngine()
+
+
+# ---------------------------------------------------------------------------
+# Run the full pipeline
+# ---------------------------------------------------------------------------
+def run_detection(image: Image.Image) -> dict:
+    """Execute the detection pipeline and return structured results."""
+    start = time.time()
+
+    metadata_det = load_metadata_detector()
+    frequency_det = load_frequency_detector()
+    texture_det = load_texture_detector()
+    cnn = load_cnn_classifier()
+    ensemble = load_ensemble()
+
+    metadata_result = metadata_det.analyze(image)
+    frequency_result = frequency_det.analyze(image)
+    texture_result = texture_det.analyze(image)
+    cnn_result = cnn.predict(image)
+
+    decision = ensemble.decide(
+        cnn_result=cnn_result,
+        frequency_result=frequency_result,
+        metadata_result=metadata_result,
+        texture_result=texture_result,
+    )
+
+    elapsed = time.time() - start
+
+    return {
+        "decision": decision,
+        "individual": {
+            "CNN Classifier": cnn_result,
+            "Frequency Analysis": frequency_result,
+            "Metadata Analysis": metadata_result,
+            "Texture Analysis": texture_result,
+        },
+        "elapsed_seconds": round(elapsed, 3),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sidebar — settings / weights
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.header("Settings")
+    st.caption(f"Model: **{settings.model_name}** · v{settings.app_version}")
+    st.divider()
+
+    st.subheader("Ensemble Weights")
+    w_cnn = st.slider("CNN weight", 0.0, 1.0, settings.weight_cnn, 0.05, key="w_cnn")
+    w_freq = st.slider("Frequency weight", 0.0, 1.0, settings.weight_frequency, 0.05, key="w_freq")
+    w_meta = st.slider("Metadata weight", 0.0, 1.0, settings.weight_metadata, 0.05, key="w_meta")
+    w_tex = st.slider("Texture weight", 0.0, 1.0, settings.weight_texture, 0.05, key="w_tex")
+
+    total = w_cnn + w_freq + w_meta + w_tex
+    if total == 0:
+        st.warning("At least one weight must be > 0")
+    else:
+        # Normalize weights so they sum to 1
+        settings.weight_cnn = w_cnn / total
+        settings.weight_frequency = w_freq / total
+        settings.weight_metadata = w_meta / total
+        settings.weight_texture = w_tex / total
+
+    st.divider()
+    st.subheader("Thresholds")
+    settings.confidence_threshold = st.slider(
+        "Classification threshold", 0.0, 1.0, settings.confidence_threshold, 0.05
+    )
+    st.divider()
+    st.caption("Powered by EfficientNet-B4 + multi-signal ensemble")
+
+# ---------------------------------------------------------------------------
+# Main area
+# ---------------------------------------------------------------------------
+st.title("AI Image Detector")
+st.markdown(
+    "Upload an image to analyze whether it was generated by AI. "
+    "The system uses **four independent detection methods** combined "
+    "through an ensemble decision engine."
+)
+
+uploaded_file = st.file_uploader(
+    "Choose an image",
+    type=["jpg", "jpeg", "png", "webp"],
+    help="Supported formats: JPEG, PNG, WEBP — max 10 MB",
+)
+
+if uploaded_file is not None:
+    # --- Load & validate ------------------------------------------------
+    raw_bytes = uploaded_file.read()
+    try:
+        preprocessor = load_preprocessor()
+        image = preprocessor.load_from_bytes(raw_bytes)
+    except ValueError as exc:
+        st.error(f"Invalid image: {exc}")
+        st.stop()
+
+    # --- Layout: image + results side-by-side ---------------------------
+    col_img, col_res = st.columns([1, 1], gap="large")
+
+    with col_img:
+        st.image(image, caption=uploaded_file.name, use_container_width=True)
+        w, h = image.size
+        st.caption(f"{w} x {h} px · {len(raw_bytes) / 1024:.1f} KB · {image.format or 'N/A'}")
+
+    with col_res:
+        with st.spinner("Analyzing image…"):
+            results = run_detection(image)
+
+        decision = results["decision"]
+        is_ai = decision["is_ai_generated"]
+        confidence = decision["confidence_score"]
+        risk = decision["risk_level"]
+
+        # --- Verdict banner ------------------------------------------------
+        if is_ai:
+            st.error(f"**Verdict: Likely AI-Generated** — confidence {confidence:.1%}")
+        else:
+            st.success(f"**Verdict: Likely Authentic** — confidence {1 - confidence:.1%}")
+
+        # --- Metrics row ---------------------------------------------------
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Confidence", f"{confidence:.1%}")
+        risk_colors = {"Low": "green", "Medium": "orange", "High": "red"}
+        m2.metric("Risk Level", risk)
+        m3.metric("Latency", f"{results['elapsed_seconds']:.2f}s")
+
+        # --- Progress-style confidence bar ---------------------------------
+        st.progress(confidence, text=f"AI likelihood: {confidence:.1%}")
+
+    # --- Detailed breakdown (full width) --------------------------------
+    st.divider()
+    st.subheader("Detector Breakdown")
+
+    det_cols = st.columns(4)
+    for idx, (name, res) in enumerate(results["individual"].items()):
+        with det_cols[idx]:
+            score = res["score"]
+            st.markdown(f"**{name}**")
+            st.progress(score, text=f"{score:.1%}")
+            if res["signals"]:
+                for sig in res["signals"]:
+                    st.caption(f"• {sig}")
+            else:
+                st.caption("No signals detected")
+
+    # --- Signals list ------------------------------------------------------
+    st.divider()
+    st.subheader("All Signals Detected")
+    signals = decision["signals_detected"]
+    if signals:
+        for sig in signals:
+            st.markdown(f"- {sig}")
+    else:
+        st.info("No AI-generation signals detected.")
+
+    # --- Raw JSON (collapsible) -------------------------------------------
+    with st.expander("Raw JSON Response"):
+        st.json(
+            {
+                "is_ai_generated": is_ai,
+                "confidence_score": confidence,
+                "risk_level": risk,
+                "signals_detected": signals,
+                "model_version": settings.app_version,
+                "individual_scores": {
+                    k: round(v["score"], 4) for k, v in results["individual"].items()
+                },
+                "elapsed_seconds": results["elapsed_seconds"],
+            }
+        )
+else:
+    # --- Landing state ---------------------------------------------------
+    st.info("Upload an image above to get started.")
+
+    st.divider()
+    st.subheader("How It Works")
+
+    how_cols = st.columns(4)
+    with how_cols[0]:
+        st.markdown("**CNN Classifier**")
+        st.caption(
+            "EfficientNet-B4 transfer-learning model trained to distinguish "
+            "AI-generated images from real photographs."
+        )
+    with how_cols[1]:
+        st.markdown("**Frequency Analysis**")
+        st.caption(
+            "FFT-based spectral analysis that detects GAN fingerprints "
+            "and abnormal frequency distributions."
+        )
+    with how_cols[2]:
+        st.markdown("**Metadata Analysis**")
+        st.caption(
+            "EXIF metadata inspection for AI tool signatures, missing camera "
+            "data, and format-level hints."
+        )
+    with how_cols[3]:
+        st.markdown("**Texture Analysis**")
+        st.caption(
+            "Spatial coherence checks for micro-texture anomalies, blur "
+            "inconsistencies, and color correlation."
+        )

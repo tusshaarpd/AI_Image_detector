@@ -14,9 +14,10 @@ COPY . .
 
 RUN mkdir -p /app/uploads /app/models/weights
 
-EXPOSE 8000
+EXPOSE 8501 8000
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Default: run Streamlit UI.  Override with docker-compose to run FastAPI.
+CMD ["streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]

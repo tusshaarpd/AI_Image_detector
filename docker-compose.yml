@@ -1,8 +1,28 @@
 version: "3.9"
 
 services:
-  detector:
+  # ── Streamlit UI (default) ──────────────────────────────────────────────
+  streamlit:
     build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./models/weights:/app/models/weights
+    environment:
+      - MAX_IMAGE_SIZE_MB=10
+      - LOG_LEVEL=INFO
+      - MODEL_NAME=efficientnet_b4
+      - CONFIDENCE_THRESHOLD=0.5
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    restart: unless-stopped
+
+  # ── FastAPI REST API (optional) ─────────────────────────────────────────
+  api:
+    build: .
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
     ports:
       - "8000:8000"
     volumes:
